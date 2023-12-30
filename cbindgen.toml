@@ -1,0 +1,7 @@
+
+[parse]
+parse_deps = true
+include = ["candle_transformers", "tokenizers", "lazy_static", "serde_json"]
+
+[export]
+include = ["init_model", "generate_embeddings", "free_embeddings"]
