@@ -59,6 +59,16 @@ pub struct EmbeddingResult {
     error: *const c_char,
 }
 
+impl EmbeddingResult {
+    fn from_error_string(e: String) -> EmbeddingResult {
+        return EmbeddingResult {
+            embeddings: std::ptr::null(),
+            len: 0,
+            error: CString::new(e).unwrap().into_raw(),
+        };
+    }
+}
+
 // Function to generate embeddings
 #[no_mangle]
 pub extern "C" fn generate_embeddings(text: *const c_char) -> EmbeddingResult {
@@ -67,13 +77,7 @@ pub extern "C" fn generate_embeddings(text: *const c_char) -> EmbeddingResult {
     let model_guard = MODEL.lock().unwrap();
     let (model, tokenizer) = match model_guard.as_ref() {
         Some(data) => data,
-        None => {
-            return EmbeddingResult {
-                embeddings: std::ptr::null(),
-                len: 0,
-                error: CString::new("Model not initialized").unwrap().into_raw(),
-            }
-        }
+        None => return EmbeddingResult::from_error_string("Model not initialized".to_string()),
     };
 
     // Create a new tokenizer instance with the desired configuration
@@ -81,21 +85,13 @@ pub extern "C" fn generate_embeddings(text: *const c_char) -> EmbeddingResult {
     new_tokenizer.with_padding(Some(PaddingParams::default()));
 
     if let Err(e) = new_tokenizer.with_truncation(None) {
-        return EmbeddingResult {
-            embeddings: std::ptr::null(),
-            len: 0,
-            error: CString::new(e.to_string()).unwrap().into_raw(),
-        };
+        return EmbeddingResult::from_error_string(e.to_string());
     }
 
     let tokens = match tokenizer.encode(text, true) {
         Ok(t) => t,
         Err(e) => {
-            return EmbeddingResult {
-                embeddings: std::ptr::null(),
-                len: 0,
-                error: CString::new(e.to_string()).unwrap().into_raw(),
-            }
+            return EmbeddingResult::from_error_string(e.to_string());
         }
     };
 
@@ -105,11 +101,7 @@ pub extern "C" fn generate_embeddings(text: *const c_char) -> EmbeddingResult {
     {
         Ok(t) => t,
         Err(e) => {
-            return EmbeddingResult {
-                embeddings: std::ptr::null(),
-                len: 0,
-                error: CString::new(e.to_string()).unwrap().into_raw(),
-            }
+            return EmbeddingResult::from_error_string(e.to_string());
         }
     };
 
@@ -117,25 +109,37 @@ pub extern "C" fn generate_embeddings(text: *const c_char) -> EmbeddingResult {
 
     let embeddings = match model.forward(&token_ids, &token_type_ids) {
         Ok(e) => e,
+        Err(e) => return EmbeddingResult::from_error_string(e.to_string()),
+    };
+
+    let embeddings = match model.forward(&token_ids, &token_type_ids) {
+        Ok(e) => e,
+        Err(e) => return EmbeddingResult::from_error_string(e.to_string()),
+    };
+
+    let (_n_sentence, n_tokens, _hidden_size) = match embeddings.dims3() {
+        Ok(e) => e,
         Err(e) => {
-            return EmbeddingResult {
-                embeddings: std::ptr::null(),
-                len: 0,
-                error: CString::new(e.to_string()).unwrap().into_raw(),
-            }
+            return EmbeddingResult::from_error_string(e.to_string());
+        }
+    };
+    let summed = match embeddings.sum(1) {
+        Ok(e) => e,
+        Err(e) => {
+            return EmbeddingResult::from_error_string(e.to_string());
+        }
+    };
+    let embeddings = match summed / (n_tokens as f64) {
+        Ok(e) => e,
+        Err(e) => {
+            return EmbeddingResult::from_error_string(e.to_string());
         }
     };
 
     // Flatten the tensor without changing the total number of elements
     let reshaped_embeddings = match embeddings.reshape(&[embeddings.elem_count()]) {
         Ok(r) => r,
-        Err(e) => {
-            return EmbeddingResult {
-                embeddings: std::ptr::null(),
-                len: 0,
-                error: CString::new(e.to_string()).unwrap().into_raw(),
-            }
-        }
+        Err(e) => return EmbeddingResult::from_error_string(e.to_string()),
     };
 
     let elem_count = reshaped_embeddings.elem_count();
@@ -190,6 +194,6 @@ mod tests {
         let c_str = CString::new(text).unwrap();
         let chars: *const c_char = c_str.as_ptr() as *const c_char;
         let result: EmbeddingResult = generate_embeddings(chars);
-        assert_eq!(49152, result.len);
+        assert_eq!(384, result.len);
     }
 }

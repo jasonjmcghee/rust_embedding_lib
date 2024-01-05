@@ -12,7 +12,6 @@ candle-transformers = "0.3.2"
 tokenizers = "0.15.0"
 lazy_static = "1.4.0"
 serde_json = "1.0"
-tokio = { version = "1", features = ["full"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
